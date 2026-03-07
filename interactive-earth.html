@@ -337,13 +337,21 @@
         }
         
         function createBaseSphere() {
+            // Solid sphere to occlude back-facing lines
+            const solidGeo = new THREE.SphereGeometry(RADIUS, 64, 64);
+            const solidMat = new THREE.MeshBasicMaterial({
+                color: 0xf8f7f2,  // Same as background color
+                side: THREE.FrontSide
+            });
+            const solidSphere = new THREE.Mesh(solidGeo, solidMat);
+            solidSphere.renderOrder = -1;  // Render first
+            earthGroup.add(solidSphere);
+            
             // Very subtle base sphere outline
             const geo = new THREE.IcosahedronGeometry(RADIUS, 3);
             const mat = new THREE.MeshBasicMaterial({
-                color: 0x1a1a1a,
-                wireframe: true,
-                transparent: true,
-                opacity: 0.04
+                color: 0xd0d0d0,
+                wireframe: true
             });
             const sphere = new THREE.Mesh(geo, mat);
             earthGroup.add(sphere);
@@ -362,9 +370,7 @@
                 const points = curve.getPoints(64);
                 const geo = new THREE.BufferGeometry().setFromPoints(points);
                 const mat = new THREE.LineBasicMaterial({
-                    color: 0x1a1a1a,
-                    transparent: true,
-                    opacity: lat === 0 ? 0.25 : 0.1
+                    color: lat === 0 ? 0x888888 : 0xcccccc
                 });
                 const line = new THREE.Line(geo, mat);
                 line.rotation.x = Math.PI / 2;
@@ -385,9 +391,7 @@
                 }
                 const geo = new THREE.BufferGeometry().setFromPoints(points);
                 const mat = new THREE.LineBasicMaterial({
-                    color: 0x1a1a1a,
-                    transparent: true,
-                    opacity: 0.1
+                    color: 0xcccccc
                 });
                 const line = new THREE.Line(geo, mat);
                 gridGroup.add(line);
@@ -403,11 +407,7 @@
                 const points = curve.getPoints(64);
                 const geo = new THREE.BufferGeometry().setFromPoints(points);
                 const mat = new THREE.LineBasicMaterial({
-                    color: 0x1a1a1a,
-                    transparent: true,
-                    opacity: 0.08,
-                    dashSize: 0.05,
-                    gapSize: 0.03
+                    color: 0xdddddd
                 });
                 const line = new THREE.Line(geo, mat);
                 line.rotation.x = Math.PI / 2;
@@ -477,16 +477,14 @@
                 const isOuterRing = ringIndex === 0;
                 
                 ring.forEach(([lon, lat]) => {
-                    const pos = latLonToVector3(lat, lon, RADIUS + 0.002);
+                    const pos = latLonToVector3(lat, lon, RADIUS + 0.001);
                     points.push(pos);
                 });
                 
                 if (points.length > 1) {
                     const geo = new THREE.BufferGeometry().setFromPoints(points);
                     const mat = new THREE.LineBasicMaterial({
-                        color: 0x1a1a1a,
-                        transparent: true,
-                        opacity: isOuterRing ? 0.5 : 0.2
+                        color: isOuterRing ? 0x333333 : 0x999999
                     });
                     const line = new THREE.Line(geo, mat);
                     group.add(line);
@@ -516,16 +514,14 @@
             const points = [];
             
             outerRing.forEach(([lon, lat]) => {
-                const pos = latLonToVector3(lat, lon, RADIUS + 0.003);
+                const pos = latLonToVector3(lat, lon, RADIUS + 0.001);
                 points.push(pos);
             });
             
             if (points.length > 1) {
                 const geo = new THREE.BufferGeometry().setFromPoints(points);
                 const mat = new THREE.LineBasicMaterial({
-                    color: 0x1a1a1a,
-                    transparent: true,
-                    opacity: 0.7
+                    color: 0x1a1a1a
                 });
                 const line = new THREE.Line(geo, mat);
                 coastlinesGroup.add(line);
@@ -558,12 +554,10 @@
             ];
             
             majorCountries.forEach(border => {
-                const points = border.map(([lon, lat]) => latLonToVector3(lat, lon, RADIUS + 0.002));
+                const points = border.map(([lon, lat]) => latLonToVector3(lat, lon, RADIUS + 0.001));
                 const geo = new THREE.BufferGeometry().setFromPoints(points);
                 const mat = new THREE.LineBasicMaterial({
-                    color: 0x1a1a1a,
-                    transparent: true,
-                    opacity: 0.6
+                    color: 0x1a1a1a
                 });
                 const line = new THREE.Line(geo, mat);
                 bordersGroup.add(line);
@@ -699,7 +693,7 @@
                     // Only coastlines + equator
                     gridGroup.visible = true;
                     gridGroup.children.forEach((child, i) => {
-                        child.material.opacity = i === 2 ? 0.3 : 0.02; // Only equator
+                        child.material.color.setHex(i === 2 ? 0x888888 : 0xe0e0e0); // Only equator
                     });
                     if (bordersGroup) bordersGroup.visible = false;
                     if (coastlinesGroup) coastlinesGroup.visible = true;
@@ -710,20 +704,20 @@
                     gridGroup.visible = true;
                     gridGroup.children.forEach((child, i) => {
                         if (i < 5) { // Main latitudes
-                            child.material.opacity = i === 2 ? 0.25 : 0.1;
+                            child.material.color.setHex(i === 2 ? 0x888888 : 0xcccccc);
                         } else if (i < 11) { // Meridians
-                            child.material.opacity = 0.1;
+                            child.material.color.setHex(0xcccccc);
                         } else { // Special circles
-                            child.material.opacity = 0.06;
+                            child.material.color.setHex(0xdddddd);
                         }
                     });
                     if (bordersGroup) bordersGroup.visible = true;
                     if (coastlinesGroup) coastlinesGroup.visible = true;
                     
-                    // Adjust border opacity
+                    // Adjust border colors
                     bordersGroup.traverse(child => {
                         if (child.isLine) {
-                            child.material.opacity = child.material.opacity > 0.3 ? 0.5 : 0.2;
+                            child.material.color.setHex(child.material.color.getHex() === 0x333333 ? 0x444444 : 0x888888);
                         }
                     });
                     break;
@@ -732,15 +726,15 @@
                     // Full grid + all borders
                     gridGroup.visible = true;
                     gridGroup.children.forEach(child => {
-                        child.material.opacity *= 1.5;
+                        child.material.color.setHex(0x666666);
                     });
                     if (bordersGroup) bordersGroup.visible = true;
                     if (coastlinesGroup) coastlinesGroup.visible = true;
                     
-                    // Full border opacity
+                    // Full border color
                     bordersGroup.traverse(child => {
                         if (child.isLine) {
-                            child.material.opacity = child.material.opacity > 0.3 ? 0.8 : 0.4;
+                            child.material.color.setHex(0x1a1a1a);
                         }
                     });
                     break;
