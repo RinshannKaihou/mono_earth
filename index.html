@@ -565,51 +565,119 @@
             
             // Major world capitals and cities
             const cities = [
-                { name: 'Beijing', lat: 39.9042, lon: 116.4074 },
-                { name: 'Tokyo', lat: 35.6762, lon: 139.6503 },
-                { name: 'London', lat: 51.5074, lon: -0.1278 },
-                { name: 'Paris', lat: 48.8566, lon: 2.3522 },
-                { name: 'New York', lat: 40.7128, lon: -74.0060 },
-                { name: 'Moscow', lat: 55.7558, lon: 37.6173 },
-                { name: 'Sydney', lat: -33.8688, lon: 151.2093 },
-                { name: 'Cairo', lat: 30.0444, lon: 31.2357 },
-                { name: 'Mumbai', lat: 19.0760, lon: 72.8777 },
-                { name: 'São Paulo', lat: -23.5505, lon: -46.6333 },
-                { name: 'Los Angeles', lat: 34.0522, lon: -118.2437 },
-                { name: 'Singapore', lat: 1.3521, lon: 103.8198 },
-                { name: 'Dubai', lat: 25.2048, lon: 55.2708 },
-                { name: 'Berlin', lat: 52.5200, lon: 13.4050 },
-                { name: 'Rome', lat: 41.9028, lon: 12.4964 },
-                { name: 'Madrid', lat: 40.4168, lon: -3.7038 },
-                { name: 'Seoul', lat: 37.5665, lon: 126.9780 },
-                { name: 'Bangkok', lat: 13.7563, lon: 100.5018 },
-                { name: 'Istanbul', lat: 41.0082, lon: 28.9784 },
-                { name: 'Toronto', lat: 43.6532, lon: -79.3832 }
+                { name: 'BEIJING', lat: 39.9042, lon: 116.4074, offset: { x: 12, y: -5 } },
+                { name: 'TOKYO', lat: 35.6762, lon: 139.6503, offset: { x: 10, y: -5 } },
+                { name: 'LONDON', lat: 51.5074, lon: -0.1278, offset: { x: -45, y: -5 } },
+                { name: 'PARIS', lat: 48.8566, lon: 2.3522, offset: { x: 10, y: -5 } },
+                { name: 'NEW_YORK', lat: 40.7128, lon: -74.0060, offset: { x: -60, y: -5 } },
+                { name: 'MOSCOW', lat: 55.7558, lon: 37.6173, offset: { x: 12, y: -5 } },
+                { name: 'SYDNEY', lat: -33.8688, lon: 151.2093, offset: { x: 12, y: -5 } },
+                { name: 'CAIRO', lat: 30.0444, lon: 31.2357, offset: { x: 10, y: -5 } },
+                { name: 'MUMBAI', lat: 19.0760, lon: 72.8777, offset: { x: 12, y: -5 } },
+                { name: 'SAO_PAULO', lat: -23.5505, lon: -46.6333, offset: { x: -65, y: -5 } },
+                { name: 'LOS_ANGELES', lat: 34.0522, lon: -118.2437, offset: { x: -85, y: -5 } },
+                { name: 'SINGAPORE', lat: 1.3521, lon: 103.8198, offset: { x: 14, y: -5 } },
+                { name: 'DUBAI', lat: 25.2048, lon: 55.2708, offset: { x: 10, y: -5 } },
+                { name: 'BERLIN', lat: 52.5200, lon: 13.4050, offset: { x: 10, y: -5 } },
+                { name: 'ROME', lat: 41.9028, lon: 12.4964, offset: { x: 8, y: -5 } },
+                { name: 'MADRID', lat: 40.4168, lon: -3.7038, offset: { x: -50, y: -5 } },
+                { name: 'SEOUL', lat: 37.5665, lon: 126.9780, offset: { x: 10, y: -5 } },
+                { name: 'BANGKOK', lat: 13.7563, lon: 100.5018, offset: { x: 14, y: -5 } },
+                { name: 'ISTANBUL', lat: 41.0082, lon: 28.9784, offset: { x: 14, y: -5 } },
+                { name: 'TORONTO', lat: 43.6532, lon: -79.3832, offset: { x: -60, y: -5 } }
             ];
             
-            cities.forEach(city => {
-                const pos = latLonToVector3(city.lat, city.lon, RADIUS + 0.005);
+            cities.forEach((city, index) => {
+                const pos = latLonToVector3(city.lat, city.lon, RADIUS);
+                const posAbove = latLonToVector3(city.lat, city.lon, RADIUS + 0.008);
                 
-                // Create small dot marker
-                const dotGeo = new THREE.CircleGeometry(0.015, 16);
-                const dotMat = new THREE.MeshBasicMaterial({ 
+                // Create tiny dot marker using a small point
+                const dotGeo = new THREE.BufferGeometry().setFromPoints([pos]);
+                const dotMat = new THREE.PointsMaterial({ 
                     color: 0x1a1a1a,
-                    side: THREE.DoubleSide
+                    size: 0.012,
+                    sizeAttenuation: true
                 });
-                const dot = new THREE.Mesh(dotGeo, dotMat);
-                dot.position.copy(pos);
-                dot.lookAt(new THREE.Vector3(0, 0, 0));
+                const dot = new THREE.Points(dotGeo, dotMat);
                 dot.userData = { city: city.name };
                 citiesGroup.add(dot);
                 
-                // Small line pointing to surface
-                const lineGeo = new THREE.BufferGeometry().setFromPoints([
-                    latLonToVector3(city.lat, city.lon, RADIUS + 0.001),
-                    latLonToVector3(city.lat, city.lon, RADIUS + 0.005)
+                // Thin cross/plus marker using small lines
+                const crossSize = 0.010;
+                const crossGroup = new THREE.Group();
+                
+                // Horizontal line
+                const hLineGeo = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(pos.x - crossSize, pos.y, pos.z),
+                    new THREE.Vector3(pos.x + crossSize, pos.y, pos.z)
                 ]);
-                const lineMat = new THREE.LineBasicMaterial({ color: 0x1a1a1a, opacity: 0.5, transparent: true });
-                const line = new THREE.Line(lineGeo, lineMat);
-                citiesGroup.add(line);
+                const lineMat = new THREE.LineBasicMaterial({ color: 0x1a1a1a, opacity: 0.8, transparent: true });
+                const hLine = new THREE.Line(hLineGeo, lineMat);
+                crossGroup.add(hLine);
+                
+                // Vertical line
+                const vLineGeo = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(pos.x, pos.y - crossSize, pos.z),
+                    new THREE.Vector3(pos.x, pos.y + crossSize, pos.z)
+                ]);
+                const vLine = new THREE.Line(vLineGeo, lineMat);
+                crossGroup.add(vLine);
+                
+                // Orient cross to face outward
+                crossGroup.lookAt(pos.clone().multiplyScalar(2));
+                citiesGroup.add(crossGroup);
+                
+                // Create floating text label using canvas texture
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const fontSize = 24;
+                ctx.font = `${fontSize}px "Space Mono", monospace`;
+                const textWidth = ctx.measureText(city.name).width;
+                
+                canvas.width = textWidth + 20;
+                canvas.height = fontSize + 10;
+                
+                // Clear background (transparent)
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw text
+                ctx.font = `${fontSize}px "Space Mono", monospace`;
+                ctx.fillStyle = '#1a1a1a';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(city.name, 10, canvas.height / 2);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                texture.minFilter = THREE.LinearFilter;
+                
+                const spriteMat = new THREE.SpriteMaterial({ 
+                    map: texture,
+                    transparent: true,
+                    opacity: 0.9
+                });
+                const sprite = new THREE.Sprite(spriteMat);
+                
+                // Position sprite slightly offset from the marker
+                const labelPos = latLonToVector3(city.lat, city.lon, RADIUS + 0.025);
+                sprite.position.copy(labelPos);
+                
+                // Scale sprite to maintain readable size
+                const scaleFactor = 0.015;
+                sprite.scale.set(
+                    (canvas.width / canvas.height) * scaleFactor,
+                    scaleFactor,
+                    1
+                );
+                
+                // Store offset for animation
+                sprite.userData = { 
+                    city: city.name,
+                    basePos: labelPos.clone(),
+                    offset: city.offset || { x: 0, y: 0 },
+                    phase: index * 0.5, // Different phase for each city
+                    originalWidth: canvas.width / canvas.height
+                };
+                
+                citiesGroup.add(sprite);
             });
             
             citiesGroup.visible = false;
@@ -908,9 +976,56 @@
         // ANIMATION
         // ==========================================
         
+        let time = 0;
+        
         function animate() {
             requestAnimationFrame(animate);
+            time += 0.01;
             controls.update();
+            
+            // Calculate zoom factor based on camera distance
+            // camera distance ranges from ~1.8 (close) to 8 (far)
+            const camDist = camera.position.length();
+            const zoomFactor = Math.max(0.3, Math.min(2.0, 3.5 / camDist));
+            
+            // Animate city labels floating effect and scale with zoom
+            if (citiesGroup && citiesGroup.visible) {
+                citiesGroup.children.forEach(child => {
+                    if (child.isSprite && child.userData.basePos) {
+                        const phase = child.userData.phase || 0;
+                        const offset = child.userData.offset || { x: 0, y: 0 };
+                        
+                        // Subtle floating motion
+                        const floatX = Math.sin(time + phase) * 0.008;
+                        const floatY = Math.cos(time * 0.7 + phase) * 0.006;
+                        
+                        // Apply offset based on text position preference
+                        const offsetScale = 0.001;
+                        const offsetX = offset.x * offsetScale;
+                        const offsetY = offset.y * offsetScale;
+                        
+                        child.position.copy(child.userData.basePos);
+                        child.position.x += floatX + offsetX;
+                        child.position.y += floatY + offsetY;
+                        
+                        // Scale label with zoom
+                        const baseScale = 0.015;
+                        const newScale = baseScale * zoomFactor;
+                        child.scale.set(
+                            (child.userData.originalWidth || 1) * newScale,
+                            newScale,
+                            1
+                        );
+                    } else if (child.type === 'Points' && child.material) {
+                        // Scale the point dots with zoom
+                        child.material.size = 0.008 * zoomFactor;
+                    } else if (child.type === 'Group') {
+                        // Scale the cross markers
+                        child.scale.setScalar(zoomFactor);
+                    }
+                });
+            }
+            
             renderer.render(scene, camera);
         }
         
