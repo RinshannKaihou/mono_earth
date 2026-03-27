@@ -253,9 +253,9 @@
     </div>
     
     <div class="ui-layer mode-indicator ui-interactive">
-        <button class="mode-btn active" data-mode="standard">STANDARD</button>
-        <button class="mode-btn" data-mode="minimal">MINIMAL</button>
-        <button class="mode-btn" data-mode="detailed">DETAILED</button>
+        <button class="mode-btn active" data-mode="zen">ZEN</button>
+        <button class="mode-btn" data-mode="atlas">ATLAS</button>
+        <button class="mode-btn" data-mode="data">DATA</button>
     </div>
     
     <div class="ui-layer info">
@@ -285,7 +285,8 @@
         let scene, camera, renderer, controls;
         let earthGroup, bordersGroup, gridGroup, coastlinesGroup;
         let autoRotate = true;
-        let currentMode = 'standard';
+        let currentMode = 'zen';
+        let citiesGroup = null;
         let bordersLoaded = false;
         
         const raycaster = new THREE.Raycaster();
@@ -325,7 +326,13 @@
             // Load borders
             await loadWorldData();
             
+            // Create city markers
+            createCityMarkers();
+            
             scene.add(earthGroup);
+            
+            // Initialize in Zen mode
+            switchMode('zen');
             
             window.addEventListener('resize', onResize);
             window.addEventListener('mousemove', onMouseMove);
@@ -360,9 +367,10 @@
         function createGridLines() {
             gridGroup = new THREE.Group();
             
-            // Latitude lines (parallels)
-            const latitudes = [-60, -30, 0, 30, 60];
-            latitudes.forEach(lat => {
+            // Latitude lines (parallels) - key latitudes for Atlas mode
+            // 0 = Equator, ±23.5 = Tropics, ±66.5 = Polar circles
+            const latitudes = [0, 23.5, -23.5, 66.5, -66.5];
+            latitudes.forEach((lat, index) => {
                 const radius = Math.cos(Math.abs(lat) * Math.PI / 180) * RADIUS;
                 const y = Math.sin(lat * Math.PI / 180) * RADIUS;
                 
@@ -370,15 +378,39 @@
                 const points = curve.getPoints(64);
                 const geo = new THREE.BufferGeometry().setFromPoints(points);
                 const mat = new THREE.LineBasicMaterial({
-                    color: lat === 0 ? 0x888888 : 0xcccccc
+                    color: lat === 0 ? 0x666666 : 0xaaaaaa,
+                    transparent: true,
+                    opacity: 0.7
                 });
                 const line = new THREE.Line(geo, mat);
                 line.rotation.x = Math.PI / 2;
                 line.position.y = y;
+                line.userData = { type: 'special', lat: lat };
                 gridGroup.add(line);
             });
             
-            // Longitude lines (meridians)
+            // Additional latitude lines for Data mode
+            const extraLatitudes = [-60, -30, 30, 60];
+            extraLatitudes.forEach(lat => {
+                const radius = Math.cos(Math.abs(lat) * Math.PI / 180) * RADIUS;
+                const y = Math.sin(lat * Math.PI / 180) * RADIUS;
+                
+                const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, 2 * Math.PI, false, 0);
+                const points = curve.getPoints(64);
+                const geo = new THREE.BufferGeometry().setFromPoints(points);
+                const mat = new THREE.LineBasicMaterial({
+                    color: 0xcccccc,
+                    transparent: true,
+                    opacity: 0.5
+                });
+                const line = new THREE.Line(geo, mat);
+                line.rotation.x = Math.PI / 2;
+                line.position.y = y;
+                line.userData = { type: 'extra' };
+                gridGroup.add(line);
+            });
+            
+            // Longitude lines (meridians) for Data mode
             for (let i = 0; i < 6; i++) {
                 const angle = (i / 6) * Math.PI;
                 const points = [];
@@ -391,29 +423,29 @@
                 }
                 const geo = new THREE.BufferGeometry().setFromPoints(points);
                 const mat = new THREE.LineBasicMaterial({
-                    color: 0xcccccc
+                    color: 0xcccccc,
+                    transparent: true,
+                    opacity: 0.4
                 });
                 const line = new THREE.Line(geo, mat);
+                line.userData = { type: 'meridian' };
                 gridGroup.add(line);
             }
             
-            // Tropic and polar circles
-            const specialLatitudes = [-66.5, -23.5, 23.5, 66.5];
-            specialLatitudes.forEach(lat => {
-                const radius = Math.cos(Math.abs(lat) * Math.PI / 180) * RADIUS;
-                const y = Math.sin(lat * Math.PI / 180) * RADIUS;
-                
-                const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, 2 * Math.PI, false, 0);
-                const points = curve.getPoints(64);
-                const geo = new THREE.BufferGeometry().setFromPoints(points);
-                const mat = new THREE.LineBasicMaterial({
-                    color: 0xdddddd
-                });
-                const line = new THREE.Line(geo, mat);
-                line.rotation.x = Math.PI / 2;
-                line.position.y = y;
-                gridGroup.add(line);
+            // Equator-only line for Zen mode (stored separately)
+            const equatorRadius = RADIUS;
+            const equatorCurve = new THREE.EllipseCurve(0, 0, equatorRadius, equatorRadius, 0, 2 * Math.PI, false, 0);
+            const equatorPoints = equatorCurve.getPoints(64);
+            const equatorGeo = new THREE.BufferGeometry().setFromPoints(equatorPoints);
+            const equatorMat = new THREE.LineBasicMaterial({
+                color: 0x888888,
+                transparent: true,
+                opacity: 0.6
             });
+            const equatorLine = new THREE.Line(equatorGeo, equatorMat);
+            equatorLine.rotation.x = Math.PI / 2;
+            equatorLine.userData = { type: 'equator' };
+            gridGroup.add(equatorLine);
             
             earthGroup.add(gridGroup);
         }
@@ -526,6 +558,62 @@
                 const line = new THREE.Line(geo, mat);
                 coastlinesGroup.add(line);
             }
+        }
+        
+        function createCityMarkers() {
+            citiesGroup = new THREE.Group();
+            
+            // Major world capitals and cities
+            const cities = [
+                { name: 'Beijing', lat: 39.9042, lon: 116.4074 },
+                { name: 'Tokyo', lat: 35.6762, lon: 139.6503 },
+                { name: 'London', lat: 51.5074, lon: -0.1278 },
+                { name: 'Paris', lat: 48.8566, lon: 2.3522 },
+                { name: 'New York', lat: 40.7128, lon: -74.0060 },
+                { name: 'Moscow', lat: 55.7558, lon: 37.6173 },
+                { name: 'Sydney', lat: -33.8688, lon: 151.2093 },
+                { name: 'Cairo', lat: 30.0444, lon: 31.2357 },
+                { name: 'Mumbai', lat: 19.0760, lon: 72.8777 },
+                { name: 'São Paulo', lat: -23.5505, lon: -46.6333 },
+                { name: 'Los Angeles', lat: 34.0522, lon: -118.2437 },
+                { name: 'Singapore', lat: 1.3521, lon: 103.8198 },
+                { name: 'Dubai', lat: 25.2048, lon: 55.2708 },
+                { name: 'Berlin', lat: 52.5200, lon: 13.4050 },
+                { name: 'Rome', lat: 41.9028, lon: 12.4964 },
+                { name: 'Madrid', lat: 40.4168, lon: -3.7038 },
+                { name: 'Seoul', lat: 37.5665, lon: 126.9780 },
+                { name: 'Bangkok', lat: 13.7563, lon: 100.5018 },
+                { name: 'Istanbul', lat: 41.0082, lon: 28.9784 },
+                { name: 'Toronto', lat: 43.6532, lon: -79.3832 }
+            ];
+            
+            cities.forEach(city => {
+                const pos = latLonToVector3(city.lat, city.lon, RADIUS + 0.005);
+                
+                // Create small dot marker
+                const dotGeo = new THREE.CircleGeometry(0.015, 16);
+                const dotMat = new THREE.MeshBasicMaterial({ 
+                    color: 0x1a1a1a,
+                    side: THREE.DoubleSide
+                });
+                const dot = new THREE.Mesh(dotGeo, dotMat);
+                dot.position.copy(pos);
+                dot.lookAt(new THREE.Vector3(0, 0, 0));
+                dot.userData = { city: city.name };
+                citiesGroup.add(dot);
+                
+                // Small line pointing to surface
+                const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                    latLonToVector3(city.lat, city.lon, RADIUS + 0.001),
+                    latLonToVector3(city.lat, city.lon, RADIUS + 0.005)
+                ]);
+                const lineMat = new THREE.LineBasicMaterial({ color: 0x1a1a1a, opacity: 0.5, transparent: true });
+                const line = new THREE.Line(lineGeo, lineMat);
+                citiesGroup.add(line);
+            });
+            
+            citiesGroup.visible = false;
+            earthGroup.add(citiesGroup);
         }
         
         function createFallbackBorders() {
@@ -689,54 +777,115 @@
             currentMode = mode;
             
             switch(mode) {
-                case 'minimal':
-                    // Only coastlines + equator
-                    gridGroup.visible = true;
-                    gridGroup.children.forEach((child, i) => {
-                        child.material.color.setHex(i === 2 ? 0x888888 : 0xe0e0e0); // Only equator
-                    });
-                    if (bordersGroup) bordersGroup.visible = false;
-                    if (coastlinesGroup) coastlinesGroup.visible = true;
-                    break;
+                case 'zen':
+                    // Ultra-minimal: only coastlines + equator
+                    // Slower rotation for meditation
+                    controls.autoRotateSpeed = 0.3;
                     
-                case 'standard':
-                    // Grid + coastlines + light borders
-                    gridGroup.visible = true;
-                    gridGroup.children.forEach((child, i) => {
-                        if (i < 5) { // Main latitudes
-                            child.material.color.setHex(i === 2 ? 0x888888 : 0xcccccc);
-                        } else if (i < 11) { // Meridians
-                            child.material.color.setHex(0xcccccc);
-                        } else { // Special circles
-                            child.material.color.setHex(0xdddddd);
-                        }
-                    });
-                    if (bordersGroup) bordersGroup.visible = true;
-                    if (coastlinesGroup) coastlinesGroup.visible = true;
-                    
-                    // Adjust border colors
-                    bordersGroup.traverse(child => {
-                        if (child.isLine) {
-                            child.material.color.setHex(child.material.color.getHex() === 0x333333 ? 0x444444 : 0x888888);
-                        }
-                    });
-                    break;
-                    
-                case 'detailed':
-                    // Full grid + all borders
-                    gridGroup.visible = true;
+                    // Show only equator, hide all other grid lines
                     gridGroup.children.forEach(child => {
-                        child.material.color.setHex(0x666666);
-                    });
-                    if (bordersGroup) bordersGroup.visible = true;
-                    if (coastlinesGroup) coastlinesGroup.visible = true;
-                    
-                    // Full border color
-                    bordersGroup.traverse(child => {
-                        if (child.isLine) {
-                            child.material.color.setHex(0x1a1a1a);
+                        if (child.userData.type === 'equator') {
+                            child.visible = true;
+                            child.material.opacity = 0.4;
+                            child.material.linewidth = 1;
+                        } else {
+                            child.visible = false;
                         }
                     });
+                    gridGroup.visible = true;
+                    
+                    // Show only coastlines, no internal borders
+                    if (bordersGroup) bordersGroup.visible = false;
+                    if (coastlinesGroup) {
+                        coastlinesGroup.visible = true;
+                        // Ultra-thin lines for zen aesthetic
+                        coastlinesGroup.traverse(child => {
+                            if (child.isLine && child.material) {
+                                child.material.opacity = 0.6;
+                            }
+                        });
+                    }
+                    if (citiesGroup) citiesGroup.visible = false;
+                    break;
+                    
+                case 'atlas':
+                    // Classic map style: coastlines + key borders + special latitudes
+                    // Medium rotation speed
+                    controls.autoRotateSpeed = 0.5;
+                    
+                    // Show special latitudes (equator, tropics, polar circles)
+                    gridGroup.children.forEach(child => {
+                        if (child.userData.type === 'special') {
+                            child.visible = true;
+                            child.material.opacity = 0.7;
+                        } else if (child.userData.type === 'equator') {
+                            child.visible = false; // Hide the duplicate equator
+                        } else {
+                            child.visible = false;
+                        }
+                    });
+                    gridGroup.visible = true;
+                    
+                    // Show coastlines + subtle borders
+                    if (coastlinesGroup) {
+                        coastlinesGroup.visible = true;
+                        coastlinesGroup.traverse(child => {
+                            if (child.isLine && child.material) {
+                                child.material.opacity = 1.0;
+                            }
+                        });
+                    }
+                    if (bordersGroup) {
+                        bordersGroup.visible = true;
+                        // Lighter borders for cleaner look
+                        bordersGroup.traverse(child => {
+                            if (child.isLine && child.material) {
+                                const originalColor = child.material.color.getHex();
+                                // Make borders subtle
+                                if (originalColor === 0x333333) {
+                                    child.material.color.setHex(0x666666);
+                                    child.material.opacity = 0.6;
+                                } else {
+                                    child.material.color.setHex(0xaaaaaa);
+                                    child.material.opacity = 0.4;
+                                }
+                            }
+                        });
+                    }
+                    if (citiesGroup) citiesGroup.visible = false;
+                    break;
+                    
+                case 'data':
+                    // Full information: all borders + full grid + city markers
+                    // Faster rotation for exploration feel
+                    controls.autoRotateSpeed = 0.8;
+                    
+                    // Show all grid lines
+                    gridGroup.children.forEach(child => {
+                        child.visible = true;
+                        child.material.opacity = 1.0;
+                    });
+                    gridGroup.visible = true;
+                    
+                    // Show everything with full opacity
+                    if (coastlinesGroup) {
+                        coastlinesGroup.visible = true;
+                        coastlinesGroup.traverse(child => {
+                            if (child.isLine && child.material) {
+                                child.material.opacity = 1.0;
+                            }
+                        });
+                    }
+                    if (bordersGroup) {
+                        bordersGroup.visible = true;
+                        bordersGroup.traverse(child => {
+                            if (child.isLine && child.material) {
+                                child.material.color.setHex(0x1a1a1a);
+                                child.material.opacity = 1.0;
+                            }
+                        });
+                    }
+                    if (citiesGroup) citiesGroup.visible = true;
                     break;
             }
         }
