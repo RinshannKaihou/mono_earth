@@ -1,0 +1,1696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TERRA · Line-Art Earth Observatory</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --line-color: #1a1a1a;
+            --line-subtle: rgba(26, 26, 26, 0.15);
+            --line-faint: rgba(26, 26, 26, 0.35);
+            --bg-color: #f5f2ea;
+            --accent: #c0392b;
+            --accent-2: #2b6cb0;
+            --accent-3: #4a5d3a;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            font-family: 'Space Mono', 'Noto Sans SC', monospace;
+            background: var(--bg-color);
+            overflow: hidden;
+            color: var(--line-color);
+            height: 100%;
+            user-select: none;
+        }
+
+        #canvas-container {
+            position: fixed; inset: 0;
+            z-index: 1;
+        }
+
+        .paper-texture {
+            position: fixed; inset: 0;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0.35;
+            mix-blend-mode: multiply;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        }
+        .vignette {
+            position: fixed; inset: 0;
+            pointer-events: none; z-index: 3;
+            background: radial-gradient(ellipse at center, transparent 55%, rgba(26,26,26,0.18) 100%);
+        }
+
+        .ui { position: fixed; z-index: 10; pointer-events: none; }
+        .ui > *, .ui-interactive { pointer-events: auto; }
+
+        /* ====================================================================
+           Corners + registration marks — graph-paper aesthetic
+        ==================================================================== */
+        .corner {
+            position: fixed;
+            width: 48px; height: 48px;
+            border: 1px solid var(--line-subtle);
+            z-index: 4; pointer-events: none;
+        }
+        .corner-tl { top: 1rem; left: 1rem; border-right: none; border-bottom: none; }
+        .corner-tr { top: 1rem; right: 1rem; border-left: none; border-bottom: none; }
+        .corner-bl { bottom: 1rem; left: 1rem; border-right: none; border-top: none; }
+        .corner-br { bottom: 1rem; right: 1rem; border-left: none; border-top: none; }
+
+        .reg-mark {
+            position: fixed; z-index: 4;
+            width: 14px; height: 14px;
+            pointer-events: none;
+            opacity: 0.5;
+        }
+        .reg-mark::before, .reg-mark::after {
+            content: ''; position: absolute;
+            background: var(--line-subtle);
+        }
+        .reg-mark::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
+        .reg-mark::after  { top: 50%; left: 0; width: 100%; height: 1px; transform: translateY(-50%); }
+
+        /* ====================================================================
+           Loading screen
+        ==================================================================== */
+        .loading {
+            position: fixed; inset: 0;
+            background: var(--bg-color);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 100; gap: 1.5rem;
+            transition: opacity 0.8s;
+        }
+        .loading.hidden { opacity: 0; pointer-events: none; }
+        .loading-glyph {
+            width: 68px; height: 68px;
+            border: 1px solid var(--line-color);
+            border-radius: 50%;
+            position: relative;
+            animation: rot 3.2s linear infinite;
+        }
+        .loading-glyph::before, .loading-glyph::after {
+            content: ''; position: absolute;
+            left: 50%; top: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--line-color);
+        }
+        .loading-glyph::before { width: 100%; height: 1px; }
+        .loading-glyph::after  { width: 1px; height: 100%; }
+        @keyframes rot { to { transform: rotate(360deg); } }
+
+        .loading-text {
+            font-size: 0.7rem; letter-spacing: 0.35em;
+            opacity: 0.6;
+        }
+        .loading-status {
+            font-size: 0.62rem; letter-spacing: 0.25em;
+            opacity: 0.4; min-height: 1em;
+        }
+        .loading-bar {
+            width: 160px; height: 1px;
+            background: var(--line-subtle);
+            position: relative; overflow: hidden;
+        }
+        .loading-progress {
+            position: absolute; left: 0; top: 0;
+            height: 100%; background: var(--line-color);
+            width: 0%; transition: width 0.3s;
+        }
+
+        /* ====================================================================
+           Header
+        ==================================================================== */
+        .header {
+            top: 1.8rem; left: 2rem;
+        }
+        .kicker {
+            font-size: 0.62rem; letter-spacing: 0.48em;
+            opacity: 0.45; margin-bottom: 0.4rem;
+        }
+        .title-row {
+            display: flex; align-items: baseline; gap: 1rem;
+        }
+        .title {
+            font-size: 1.7rem; font-weight: 300;
+            letter-spacing: 0.2em;
+        }
+        .title-cn {
+            font-family: 'Noto Sans SC', serif;
+            font-size: 0.9rem; letter-spacing: 0.4em;
+            opacity: 0.55; font-weight: 300;
+        }
+        .subkicker {
+            font-size: 0.6rem; letter-spacing: 0.3em;
+            opacity: 0.4; margin-top: 0.35rem;
+        }
+
+        /* ====================================================================
+           Mode chips
+        ==================================================================== */
+        .mode-indicator {
+            top: 1.8rem; right: 2rem;
+            display: flex;
+            border: 1px solid var(--line-color);
+            background: rgba(245,242,234,0.6);
+            backdrop-filter: blur(2px);
+        }
+        .mode-btn {
+            padding: 0.55rem 1rem; border: none;
+            background: transparent;
+            font-family: inherit;
+            font-size: 0.62rem; letter-spacing: 0.2em;
+            cursor: pointer;
+            transition: all 0.18s;
+            color: var(--line-color);
+            border-right: 1px solid var(--line-color);
+        }
+        .mode-btn:last-child { border-right: none; }
+        .mode-btn:hover { background: rgba(26,26,26,0.06); }
+        .mode-btn.active { background: var(--line-color); color: var(--bg-color); }
+
+        /* ====================================================================
+           Data panel (right side)
+        ==================================================================== */
+        .data-panel {
+            top: 5.5rem; right: 2rem;
+            width: 260px;
+            border: 1px solid var(--line-subtle);
+            background: rgba(245,242,234,0.72);
+            backdrop-filter: blur(3px);
+            padding: 1rem 1.1rem;
+            font-size: 0.64rem;
+            letter-spacing: 0.1em;
+            line-height: 1.9;
+        }
+        .dp-label {
+            opacity: 0.45; font-size: 0.55rem;
+            letter-spacing: 0.28em;
+            margin-top: 0.6rem;
+        }
+        .dp-value {
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            font-size: 0.72rem;
+        }
+        .dp-value.accent { color: var(--accent); }
+        .dp-value.cool { color: var(--accent-2); }
+        .dp-value.green { color: var(--accent-3); }
+        .dp-row { display: flex; justify-content: space-between; }
+        .dp-sep {
+            margin: 0.6rem -1.1rem;
+            border-bottom: 1px dashed var(--line-subtle);
+        }
+
+        /* ====================================================================
+           Info panel (left bottom)
+        ==================================================================== */
+        .info {
+            bottom: 2rem; left: 2rem;
+            font-size: 0.65rem;
+            letter-spacing: 0.1em; line-height: 1.8;
+            max-width: 280px;
+        }
+        .coord {
+            font-size: 0.85rem;
+            letter-spacing: 0.08em;
+            margin-top: 0.3rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .region-label {
+            font-family: 'Noto Sans SC', sans-serif;
+            margin-top: 0.3rem;
+            font-size: 0.7rem; letter-spacing: 0.2em;
+            opacity: 0.6;
+        }
+        .hint {
+            margin-top: 1.6rem; opacity: 0.35;
+            font-size: 0.56rem; letter-spacing: 0.18em;
+            line-height: 2;
+        }
+
+        /* ====================================================================
+           Layer toggles (left, vertical)
+        ==================================================================== */
+        .layer-stack {
+            top: 50%; left: 2rem;
+            transform: translateY(-50%);
+            display: flex; flex-direction: column;
+            gap: 0.32rem;
+            border: 1px solid var(--line-subtle);
+            background: rgba(245,242,234,0.72);
+            backdrop-filter: blur(3px);
+            padding: 0.5rem 0.55rem;
+        }
+        .layer-btn {
+            width: 128px; height: 28px;
+            border: none; background: transparent;
+            font-family: inherit;
+            font-size: 0.55rem;
+            letter-spacing: 0.22em;
+            cursor: pointer; color: var(--line-color);
+            display: flex; align-items: center;
+            justify-content: space-between;
+            padding: 0 0.45rem;
+            transition: all 0.15s;
+        }
+        .layer-btn:hover { background: rgba(26,26,26,0.05); }
+        .layer-btn.on { background: var(--line-color); color: var(--bg-color); }
+        .layer-btn::before {
+            content: ''; width: 6px; height: 6px;
+            background: var(--line-subtle);
+            transition: all 0.15s;
+        }
+        .layer-btn.on::before { background: var(--bg-color); }
+        .layer-btn .key {
+            opacity: 0.4; font-size: 0.5rem;
+        }
+        .layer-btn.on .key { opacity: 0.7; }
+
+        /* ====================================================================
+           Bottom control bar
+        ==================================================================== */
+        .controls {
+            bottom: 2rem; right: 2rem;
+            display: flex; flex-direction: column;
+            gap: 0.55rem; align-items: flex-end;
+        }
+        .control-group { display: flex; gap: 0.4rem; }
+        .btn {
+            width: 42px; height: 42px;
+            border: 1px solid var(--line-color);
+            background: rgba(245,242,234,0.6);
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-family: inherit;
+            font-size: 1rem;
+            transition: all 0.15s;
+            color: var(--line-color);
+        }
+        .btn:hover { background: var(--line-color); color: var(--bg-color); }
+        .btn.active { background: var(--line-color); color: var(--bg-color); }
+
+        /* ====================================================================
+           Time scrubber (bottom center)
+        ==================================================================== */
+        .time-scrub {
+            bottom: 2rem; left: 50%;
+            transform: translateX(-50%);
+            width: min(520px, 52vw);
+            border: 1px solid var(--line-subtle);
+            background: rgba(245,242,234,0.72);
+            backdrop-filter: blur(3px);
+            padding: 0.55rem 0.9rem 0.75rem;
+            display: flex; flex-direction: column; gap: 0.45rem;
+        }
+        .ts-head {
+            display: flex; justify-content: space-between;
+            font-size: 0.58rem; letter-spacing: 0.22em;
+            opacity: 0.7;
+        }
+        .ts-time {
+            font-weight: 700; color: var(--accent);
+            font-size: 0.78rem; letter-spacing: 0.08em;
+        }
+        .ts-slider {
+            width: 100%; height: 16px;
+            position: relative; cursor: grab;
+        }
+        .ts-track {
+            position: absolute; top: 50%;
+            left: 0; right: 0; height: 1px;
+            background: var(--line-subtle);
+        }
+        .ts-tick {
+            position: absolute; top: 50%;
+            width: 1px; height: 5px;
+            background: var(--line-subtle);
+            transform: translateY(-50%);
+        }
+        .ts-tick.major { height: 9px; background: var(--line-faint); }
+        .ts-handle {
+            position: absolute; top: 50%;
+            transform: translate(-50%, -50%);
+            width: 12px; height: 12px;
+            background: var(--bg-color);
+            border: 1px solid var(--line-color);
+            cursor: grab;
+            transition: background 0.15s;
+        }
+        .ts-handle:hover, .ts-handle.drag { background: var(--line-color); }
+        .ts-now {
+            position: absolute; top: 50%;
+            width: 2px; height: 12px;
+            background: var(--accent);
+            transform: translate(-50%, -50%);
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        /* ====================================================================
+           Cheat sheet overlay
+        ==================================================================== */
+        .cheat {
+            position: fixed; inset: 0;
+            background: rgba(245,242,234,0.94);
+            z-index: 50;
+            display: none;
+            align-items: center; justify-content: center;
+        }
+        .cheat.show { display: flex; }
+        .cheat-box {
+            border: 1px solid var(--line-color);
+            padding: 2.5rem 3.2rem;
+            font-size: 0.7rem; letter-spacing: 0.14em;
+            line-height: 2.4; min-width: 380px;
+            background: var(--bg-color);
+        }
+        .cheat-title {
+            font-size: 0.9rem; letter-spacing: 0.32em;
+            margin-bottom: 1.5rem; font-weight: 300;
+        }
+        .cheat-row {
+            display: flex; justify-content: space-between;
+            gap: 3rem;
+        }
+        .cheat-key {
+            font-weight: 700; color: var(--accent);
+            font-size: 0.65rem;
+        }
+        .cheat-close-hint {
+            margin-top: 1.6rem;
+            opacity: 0.4; font-size: 0.55rem;
+            letter-spacing: 0.3em;
+        }
+
+        /* ====================================================================
+           Tiny focus ring when hovering the sphere
+        ==================================================================== */
+        body.hover-sphere { cursor: crosshair; }
+    </style>
+</head>
+<body>
+    <div class="paper-texture"></div>
+    <div class="vignette"></div>
+
+    <div class="corner corner-tl"></div>
+    <div class="corner corner-tr"></div>
+    <div class="corner corner-bl"></div>
+    <div class="corner corner-br"></div>
+
+    <div class="reg-mark" style="top:50%;left:1.1rem;transform:translateY(-50%)"></div>
+    <div class="reg-mark" style="top:50%;right:1.1rem;transform:translateY(-50%)"></div>
+    <div class="reg-mark" style="top:1.1rem;left:50%;transform:translateX(-50%)"></div>
+    <div class="reg-mark" style="bottom:1.1rem;left:50%;transform:translateX(-50%)"></div>
+
+    <div class="loading" id="loading">
+        <div class="loading-glyph"></div>
+        <div class="loading-text">TERRA OBSERVATORY</div>
+        <div class="loading-bar"><div class="loading-progress" id="loading-progress"></div></div>
+        <div class="loading-status" id="loading-status">BOOT · calibrating celestial frame</div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <div class="ui header">
+        <div class="kicker">CLAUDE · SKY-BOARD 01 · LINE-ART EARTH</div>
+        <div class="title-row">
+            <div class="title">TERRA</div>
+            <div class="title-cn">线 · 观 · 测</div>
+        </div>
+        <div class="subkicker" id="build-id">OBSERVATORY · v2 · [—]</div>
+    </div>
+
+    <div class="ui mode-indicator ui-interactive">
+        <button class="mode-btn" data-mode="minimal">MINIMAL</button>
+        <button class="mode-btn active" data-mode="standard">STANDARD</button>
+        <button class="mode-btn" data-mode="detailed">DETAILED</button>
+    </div>
+
+    <div class="ui data-panel">
+        <div class="dp-row">
+            <span>UTC</span>
+            <span class="dp-value" id="dp-utc">--:--:--</span>
+        </div>
+        <div class="dp-row">
+            <span>SUBSOLAR</span>
+            <span class="dp-value cool" id="dp-subsolar">—</span>
+        </div>
+
+        <div class="dp-sep"></div>
+
+        <div class="dp-label">SEISMIC · USGS · 24H</div>
+        <div class="dp-row">
+            <span id="dp-quakes-label">events</span>
+            <span class="dp-value accent" id="dp-quakes">—</span>
+        </div>
+        <div class="dp-row">
+            <span>max magnitude</span>
+            <span class="dp-value accent" id="dp-quakes-max">—</span>
+        </div>
+
+        <div class="dp-sep"></div>
+
+        <div class="dp-label">ROUTES · GREAT-CIRCLE</div>
+        <div class="dp-row">
+            <span>active</span>
+            <span class="dp-value green" id="dp-arcs">—</span>
+        </div>
+
+        <div class="dp-sep"></div>
+
+        <div class="dp-label">VIEW</div>
+        <div class="dp-row">
+            <span>zoom</span>
+            <span class="dp-value" id="dp-zoom">—</span>
+        </div>
+        <div class="dp-row">
+            <span>heading</span>
+            <span class="dp-value" id="dp-heading">—</span>
+        </div>
+    </div>
+
+    <div class="ui info">
+        <div style="opacity:0.55">POINTER · LAT / LON</div>
+        <div class="coord" id="coord">—</div>
+        <div class="region-label" id="region">—</div>
+        <div class="hint">
+            DRAG · ROTATE<br>
+            SCROLL · ZOOM<br>
+            CLICK · PING<br>
+            [?] · KEYS &nbsp; · &nbsp; [P] · POSTCARD
+        </div>
+    </div>
+
+    <div class="ui layer-stack ui-interactive" id="layer-stack">
+        <button class="layer-btn on" data-layer="grid">GRID<span class="key">G</span></button>
+        <button class="layer-btn on" data-layer="borders">BORDERS<span class="key">B</span></button>
+        <button class="layer-btn on" data-layer="term">TERMINATOR<span class="key">T</span></button>
+        <button class="layer-btn on" data-layer="hatch">NIGHT HATCH<span class="key">N</span></button>
+        <button class="layer-btn on" data-layer="stars">STARS<span class="key">S</span></button>
+        <button class="layer-btn on" data-layer="quakes">SEISMIC<span class="key">Q</span></button>
+        <button class="layer-btn on" data-layer="arcs">ROUTES<span class="key">A</span></button>
+    </div>
+
+    <div class="ui controls ui-interactive">
+        <div class="control-group">
+            <button class="btn active" id="btn-rotate" title="Auto-rotate [R]">⟲</button>
+            <button class="btn" id="btn-reset" title="Reset view [0]">⌂</button>
+        </div>
+        <div class="control-group">
+            <button class="btn" id="btn-zoom-out" title="Zoom out [−]">−</button>
+            <button class="btn" id="btn-zoom-in"  title="Zoom in [+]">+</button>
+        </div>
+        <div class="control-group">
+            <button class="btn" id="btn-postcard" title="Download postcard [P]">⎙</button>
+            <button class="btn" id="btn-help" title="Keyboard shortcuts [?]">?</button>
+        </div>
+    </div>
+
+    <div class="ui time-scrub ui-interactive">
+        <div class="ts-head">
+            <span>TEMPORAL · UTC</span>
+            <span class="ts-time" id="ts-time">--:--</span>
+        </div>
+        <div class="ts-slider" id="ts-slider">
+            <div class="ts-track"></div>
+            <!-- ticks injected by JS -->
+            <div class="ts-now" id="ts-now"></div>
+            <div class="ts-handle" id="ts-handle"></div>
+        </div>
+        <div class="ts-head" style="opacity:0.5;font-size:0.55rem">
+            <span>00:00</span><span>06</span><span>12</span><span>18</span><span>24:00</span>
+        </div>
+    </div>
+
+    <div class="cheat" id="cheat">
+        <div class="cheat-box">
+            <div class="cheat-title">KEYBOARD</div>
+            <div class="cheat-row"><span>rotate</span><span class="cheat-key">R</span></div>
+            <div class="cheat-row"><span>reset view</span><span class="cheat-key">0</span></div>
+            <div class="cheat-row"><span>zoom</span><span class="cheat-key">+ / −</span></div>
+            <div class="cheat-row"><span>postcard (PNG)</span><span class="cheat-key">P</span></div>
+            <div class="cheat-row"><span>realtime ⇄ scrub</span><span class="cheat-key">SPACE</span></div>
+            <div class="cheat-row"><span>toggle grid</span><span class="cheat-key">G</span></div>
+            <div class="cheat-row"><span>toggle borders</span><span class="cheat-key">B</span></div>
+            <div class="cheat-row"><span>toggle terminator</span><span class="cheat-key">T</span></div>
+            <div class="cheat-row"><span>toggle night hatch</span><span class="cheat-key">N</span></div>
+            <div class="cheat-row"><span>toggle stars</span><span class="cheat-key">S</span></div>
+            <div class="cheat-row"><span>toggle seismic</span><span class="cheat-key">Q</span></div>
+            <div class="cheat-row"><span>toggle routes</span><span class="cheat-key">A</span></div>
+            <div class="cheat-row"><span>cycle mode</span><span class="cheat-key">M</span></div>
+            <div class="cheat-close-hint">PRESS ? OR ESC TO CLOSE</div>
+        </div>
+    </div>
+
+<script>
+// ============================================================================
+// TERRA · Line-Art Earth Observatory
+// A single-file reimagining of the baseline: same aesthetic, real data,
+// real geometry, and a lot more things on screen that are actually doing
+// something.
+// ============================================================================
+
+const CFG = {
+    RADIUS: 1,
+    STAR_RADIUS: 40,
+    BG_HEX: 0xf5f2ea,
+    INK_HEX: 0x1a1a1a,
+    ACCENT_HEX: 0xc0392b,
+    ACCENT2_HEX: 0x2b6cb0,
+    ACCENT3_HEX: 0x4a5d3a,
+    BORDER_LIFT: 0.0022,
+    ARC_LIFT: 0.004,
+    QUAKE_LIFT: 0.003,
+    HATCH_LIFT: 0.0015,
+    ARC_MAX_HEIGHT: 0.22,
+    JITTER_AMP: 0.0012,     // hand-drawn wobble on borders
+};
+
+// -----------------------------------------------------------------------------
+// State
+// -----------------------------------------------------------------------------
+let scene, camera, renderer, controls;
+let earthGroup;
+let solidSphere;
+let hatchMesh;                 // ShaderMaterial sphere for night hatching
+let graticule;                 // grid group
+let borderLines;               // merged LineSegments (single draw call)
+let terminatorLine;
+let sunRay;                    // little ray toward the sun
+let starField, constellations;
+let arcGroup, arcs = [];       // each: {curve:Points[], particles:[Mesh], line:Line}
+let quakeGroup, quakes = [];
+let pingGroup, pings = [];
+let raycastSphere;             // invisible geometry for pointer→sphere
+
+let autoRotate = true;
+let currentMode = 'standard';
+let hoverOnSphere = false;
+
+// layer visibility
+const layers = {
+    grid: true, borders: true, term: true, hatch: true,
+    stars: true, quakes: true, arcs: true
+};
+
+// time
+const realClock = { start: performance.now() };
+let scrubbedUtcMinutes = null; // null = real-time
+let worldData = null;
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2(-999, -999);
+
+// -----------------------------------------------------------------------------
+// math helpers
+// -----------------------------------------------------------------------------
+function latLonToVec3(lat, lon, r = CFG.RADIUS) {
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lon + 180) * Math.PI / 180;
+    return new THREE.Vector3(
+        -r * Math.sin(phi) * Math.cos(theta),
+         r * Math.cos(phi),
+         r * Math.sin(phi) * Math.sin(theta)
+    );
+}
+
+// Correct inverse of latLonToVec3.  The baseline file got this wrong.
+function vec3ToLatLon(v) {
+    const r = v.length();
+    const lat = Math.asin(Math.max(-1, Math.min(1, v.y / r))) * 180 / Math.PI;
+    let lon = -Math.atan2(v.z, v.x) * 180 / Math.PI;
+    if (lon >  180) lon -= 360;
+    if (lon < -180) lon += 360;
+    return [lat, lon];
+}
+
+// Slerp two Vector3s on the unit sphere
+function slerp(a, b, t) {
+    const d = Math.max(-1, Math.min(1, a.dot(b)));
+    const o = Math.acos(d);
+    if (o < 1e-6) return a.clone();
+    const s = Math.sin(o);
+    return a.clone().multiplyScalar(Math.sin((1 - t) * o) / s)
+        .add(b.clone().multiplyScalar(Math.sin(t * o) / s));
+}
+
+// great-circle arc pts with parabolic bulge
+function greatCircleArc(a, b, segments = 96, maxHeight = CFG.ARC_MAX_HEIGHT) {
+    const pts = [];
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const p = slerp(a, b, t).normalize();
+        const h = Math.sin(t * Math.PI) * maxHeight;
+        p.multiplyScalar(1 + h);
+        pts.push(p);
+    }
+    return pts;
+}
+
+// Seeded hash noise — deterministic jitter across reloads
+function hash3(x, y, z) {
+    let h = (x * 374761393 + y * 668265263 + z * 2147483647) | 0;
+    h = (h ^ (h >>> 13)) * 1274126177;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
+// -----------------------------------------------------------------------------
+// Sun position — subsolar lat/lon for a given Date (UTC).
+//   declination via the "Spencer" simple model; equation of time omitted
+//   at small scale but NOAA-grade math would replace this in one swap.
+// -----------------------------------------------------------------------------
+function subsolarPoint(date) {
+    const N = Math.floor((Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+                          - Date.UTC(date.getUTCFullYear(), 0, 0)) / 86400000);
+    // declination (degrees), simple model
+    const decl = 23.44 * Math.sin(2 * Math.PI * (N - 81) / 365);
+    // UTC solar hour angle → longitude of subsolar point
+    const utcHours = date.getUTCHours()
+                   + date.getUTCMinutes() / 60
+                   + date.getUTCSeconds() / 3600;
+    let lon = -15 * (utcHours - 12);
+    if (lon >  180) lon -= 360;
+    if (lon < -180) lon += 360;
+    return { lat: decl, lon };
+}
+
+function currentDate() {
+    if (scrubbedUtcMinutes == null) return new Date();
+    const d = new Date();
+    d.setUTCHours(Math.floor(scrubbedUtcMinutes / 60),
+                  scrubbedUtcMinutes % 60,
+                  Math.floor(((scrubbedUtcMinutes * 60) % 60) * 1) , 0);
+    return d;
+}
+
+// -----------------------------------------------------------------------------
+// BOOT
+// -----------------------------------------------------------------------------
+async function init() {
+    setStatus('BOOT · calibrating celestial frame');
+    setProgress(6);
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(CFG.BG_HEX);
+
+    camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.01, 200);
+    camera.position.set(0, 0.15, 3.3);
+
+    renderer = new THREE.WebGLRenderer({
+        antialias: true, alpha: true, preserveDrawingBuffer: true  // needed for postcard
+    });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.minDistance = 1.45;
+    controls.maxDistance = 9;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.45;
+    controls.enablePan = false;
+
+    earthGroup = new THREE.Group();
+    scene.add(earthGroup);
+
+    setStatus('GEODESY · constructing graticule');
+    setProgress(14);
+
+    makeSolidSphere();
+    makeGraticule();
+    makeHatchShell();
+
+    setStatus('CELESTIAL · seeding starfield');
+    setProgress(28);
+    makeStarField();
+    makeConstellations();
+
+    // Invisible pick-sphere
+    const pickGeo = new THREE.SphereGeometry(CFG.RADIUS, 48, 48);
+    raycastSphere = new THREE.Mesh(pickGeo, new THREE.MeshBasicMaterial({ visible: false }));
+    scene.add(raycastSphere);
+
+    setStatus('CARTO · requesting world borders');
+    setProgress(40);
+
+    await loadWorldBorders();
+
+    setStatus('AVIATION · plotting great-circle routes');
+    setProgress(68);
+    makeArcs();
+
+    setStatus('SEISMIC · polling USGS feed');
+    setProgress(82);
+    await loadQuakes();
+    // keep quakes fresh without nagging the user
+    setInterval(loadQuakes, 10 * 60 * 1000);
+
+    makeTerminator();
+    makeSunRay();
+
+    pingGroup = new THREE.Group();
+    earthGroup.add(pingGroup);
+
+    setProgress(100);
+    setStatus('READY');
+    setTimeout(() => document.getElementById('loading').classList.add('hidden'), 380);
+
+    document.getElementById('build-id').textContent =
+        'OBSERVATORY · v2 · [' + new Date().toISOString().slice(0, 10) + ']';
+
+    bindUI();
+    buildTimeTicks();
+    addEventListener('resize', onResize);
+    addEventListener('mousemove', onMouseMove);
+    addEventListener('keydown', onKey);
+    renderer.domElement.addEventListener('click', onCanvasClick);
+
+    animate();
+}
+
+function setStatus(s) {
+    const el = document.getElementById('loading-status');
+    if (el) el.textContent = s;
+}
+function setProgress(p) {
+    const el = document.getElementById('loading-progress');
+    if (el) el.style.width = p + '%';
+}
+
+// -----------------------------------------------------------------------------
+// Base sphere — background-tinted occluder for back-facing line occlusion
+// -----------------------------------------------------------------------------
+function makeSolidSphere() {
+    const g = new THREE.SphereGeometry(CFG.RADIUS, 96, 96);
+    const m = new THREE.MeshBasicMaterial({ color: CFG.BG_HEX, side: THREE.FrontSide });
+    solidSphere = new THREE.Mesh(g, m);
+    solidSphere.renderOrder = -10;
+    earthGroup.add(solidSphere);
+}
+
+// -----------------------------------------------------------------------------
+// Graticule — lat/lon grid + equator + tropics/polar
+// -----------------------------------------------------------------------------
+function makeGraticule() {
+    graticule = new THREE.Group();
+    graticule.userData.kind = 'grid';
+
+    // Latitudes
+    const majorLat = [0];
+    const gridLat  = [-60, -30, 30, 60];
+    const specLat  = [-66.5, -23.5, 23.5, 66.5];
+
+    function addParallel(lat, color, radialLift = 1.0005) {
+        const r = Math.cos(Math.abs(lat) * Math.PI / 180) * CFG.RADIUS * radialLift;
+        const y = Math.sin(lat * Math.PI / 180) * CFG.RADIUS * radialLift;
+        const pts = [];
+        for (let i = 0; i <= 160; i++) {
+            const a = (i / 160) * Math.PI * 2;
+            pts.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+        }
+        const g = new THREE.BufferGeometry().setFromPoints(pts);
+        const m = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
+        const line = new THREE.Line(g, m);
+        line.userData.role = 'parallel';
+        graticule.add(line);
+    }
+
+    majorLat.forEach(l => addParallel(l, 0x555555));
+    gridLat .forEach(l => addParallel(l, 0xbfbfbf));
+    specLat .forEach(l => addParallel(l, 0xd2d2d2));
+
+    // Meridians — 12 of them (every 30°)
+    for (let i = 0; i < 12; i++) {
+        const lon = i * 30 - 180;
+        const pts = [];
+        for (let j = 0; j <= 96; j++) {
+            const lat = -90 + (j / 96) * 180;
+            pts.push(latLonToVec3(lat, lon, CFG.RADIUS * 1.0005));
+        }
+        const g = new THREE.BufferGeometry().setFromPoints(pts);
+        const m = new THREE.LineBasicMaterial({
+            color: lon === 0 ? 0x666666 : 0xbfbfbf, transparent: true, opacity: 0.9
+        });
+        const line = new THREE.Line(g, m);
+        line.userData.role = (lon === 0) ? 'prime' : 'meridian';
+        graticule.add(line);
+    }
+
+    earthGroup.add(graticule);
+}
+
+// -----------------------------------------------------------------------------
+// Night-side hatching shader.
+//   A slightly larger transparent sphere running a fragment shader that:
+//     - discards pixels on the sunlit hemisphere
+//     - draws screen-space diagonal hatching elsewhere
+//     - density and darkness ramp up as we move away from the terminator
+// -----------------------------------------------------------------------------
+function makeHatchShell() {
+    const g = new THREE.SphereGeometry(CFG.RADIUS + CFG.HATCH_LIFT, 128, 128);
+    const m = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: {
+            uSunDir: { value: new THREE.Vector3(1, 0, 0) },
+            uInk:    { value: new THREE.Color(0x1a1a1a) },
+            uTime:   { value: 0 },
+        },
+        vertexShader: `
+            varying vec3 vWorldNormal;
+            void main() {
+                vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                gl_Position  = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vWorldNormal;
+            uniform vec3  uSunDir;
+            uniform vec3  uInk;
+            uniform float uTime;
+
+            void main() {
+                float NdotL = dot(normalize(vWorldNormal), normalize(uSunDir));
+
+                // Softness around terminator prevents harsh step
+                float night = smoothstep(0.08, -0.55, NdotL);
+                if (night <= 0.005) discard;
+
+                // Screen-space hatch.  Angle biased slightly by time so the
+                // texture drifts like pencil on paper.
+                vec2 p = gl_FragCoord.xy;
+                float ang = 0.6 + 0.02 * sin(uTime * 0.15);
+                vec2 dir = vec2(cos(ang), sin(ang));
+                float coord = dot(p, dir);
+
+                // wider spacing near terminator, tighter deep in night
+                float spacing = mix(13.0, 5.5, night);
+                float stripe  = mod(coord, spacing);
+                float line    = 1.0 - smoothstep(0.0, 0.9, abs(stripe - spacing * 0.5) - 0.3);
+
+                // A secondary cross-hatch only in the deepest night
+                float cross = 0.0;
+                if (night > 0.55) {
+                    vec2 dir2 = vec2(-dir.y, dir.x);
+                    float c2  = dot(p, dir2);
+                    float s2  = mod(c2, spacing * 1.8);
+                    cross = 1.0 - smoothstep(0.0, 0.9, abs(s2 - spacing * 0.9) - 0.35);
+                }
+
+                float ink = max(line * 0.9, cross * 0.75);
+                if (ink < 0.04) discard;
+
+                gl_FragColor = vec4(uInk, ink * (0.35 + 0.45 * night));
+            }
+        `
+    });
+    hatchMesh = new THREE.Mesh(g, m);
+    hatchMesh.renderOrder = -5;
+    earthGroup.add(hatchMesh);
+}
+
+// -----------------------------------------------------------------------------
+// Starfield — procedural points on a distant sphere
+// -----------------------------------------------------------------------------
+function makeStarField() {
+    const N = 1400;
+    const pos = new Float32Array(N * 3);
+    const sz  = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+        const u = hash3(i, 1, 2);
+        const v = hash3(i, 3, 4);
+        const theta = 2 * Math.PI * u;
+        const phi   = Math.acos(2 * v - 1);
+        const r = CFG.STAR_RADIUS;
+        pos[i*3+0] = r * Math.sin(phi) * Math.cos(theta);
+        pos[i*3+1] = r * Math.cos(phi);
+        pos[i*3+2] = r * Math.sin(phi) * Math.sin(theta);
+        sz[i] = 0.5 + hash3(i, 7, 9) * 2.5;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('size',     new THREE.BufferAttribute(sz, 1));
+
+    // A small shader so stars are crisp points (no sprites needed)
+    const m = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false,
+        uniforms: { uInk: { value: new THREE.Color(0x333333) } },
+        vertexShader: `
+            attribute float size;
+            varying float vSize;
+            void main() {
+                vSize = size;
+                vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = size * (300.0 / -mv.z);
+                gl_Position  = projectionMatrix * mv;
+            }
+        `,
+        fragmentShader: `
+            varying float vSize;
+            uniform vec3  uInk;
+            void main() {
+                vec2 uv = gl_PointCoord * 2.0 - 1.0;
+                float d = length(uv);
+                if (d > 1.0) discard;
+                float a = smoothstep(1.0, 0.15, d);
+                gl_FragColor = vec4(uInk, a * 0.55);
+            }
+        `
+    });
+    starField = new THREE.Points(g, m);
+    scene.add(starField);
+}
+
+// A couple of iconic constellations — drawn as line connections at their
+// celestial coordinates (Dec, RA-as-longitude).  They orbit with the stars
+// because they live on the same outer sphere.
+function makeConstellations() {
+    constellations = new THREE.Group();
+
+    // very rough coords: [RA_hours, Dec_deg]
+    const bigDipper = [
+        [11.06, 61.75], [11.90, 53.69], [12.26, 57.03],
+        [12.90, 55.96], [13.40, 54.93], [13.79, 49.31],
+        [13.79, 49.31], [13.39, 54.93]  // closes
+    ];
+    const orion = [
+        [5.92, 7.41], [5.58, -0.30], [5.68, -1.94],
+        [5.80, -9.67], [5.80, -9.67], [5.24, -8.20],
+        [5.53, -0.30], [5.92, 7.41]
+    ];
+    const crux = [
+        [12.44, -63.10], [12.52, -57.11],
+        [12.80, -59.69], [12.25, -58.75]
+    ];
+
+    function raDecToVec3(ra_h, dec_deg) {
+        const lon = (ra_h / 24) * 360 - 180;
+        return latLonToVec3(dec_deg, lon, CFG.STAR_RADIUS * 0.995);
+    }
+
+    function addPoly(coords, col) {
+        const pts = coords.map(([ra, dec]) => raDecToVec3(ra, dec));
+        const g = new THREE.BufferGeometry().setFromPoints(pts);
+        const m = new THREE.LineBasicMaterial({
+            color: col, transparent: true, opacity: 0.35
+        });
+        constellations.add(new THREE.Line(g, m));
+    }
+    addPoly(bigDipper, 0x888888);
+    addPoly(orion,      0x888888);
+    addPoly(crux,       0x888888);
+
+    scene.add(constellations);
+}
+
+// -----------------------------------------------------------------------------
+// Borders — merged into ONE LineSegments for a single draw call.
+//   Each GeoJSON ring becomes a sequence of segment pairs.
+//   Tiny deterministic jitter adds a pencil-on-paper wobble.
+// -----------------------------------------------------------------------------
+async function loadWorldBorders() {
+    try {
+        const r = await fetch('https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson');
+        worldData = await r.json();
+    } catch (e) {
+        console.warn('borders offline', e);
+        setStatus('CARTO · offline · using fallback');
+        worldData = fallbackGeoJSON();
+    }
+
+    const segs = [];   // flat Vector3 list, pairs form segments
+    let processed = 0;
+    const totalFeatures = worldData.features.length;
+
+    function pushRing(ring) {
+        let prev = null;
+        ring.forEach(([lon, lat]) => {
+            const v = latLonToVec3(lat, lon, CFG.RADIUS + CFG.BORDER_LIFT);
+            // Deterministic jitter based on coordinate so every reload looks identical
+            const n = new THREE.Vector3(
+                (hash3(Math.round(lon*10), Math.round(lat*10), 1) - 0.5),
+                (hash3(Math.round(lon*10), Math.round(lat*10), 2) - 0.5),
+                (hash3(Math.round(lon*10), Math.round(lat*10), 3) - 0.5)
+            ).multiplyScalar(CFG.JITTER_AMP);
+            v.add(n);
+            if (prev) { segs.push(prev, v.clone()); }
+            prev = v.clone();
+        });
+    }
+
+    worldData.features.forEach((f) => {
+        const geom = f.geometry;
+        if (!geom) return;
+        if (geom.type === 'Polygon') {
+            geom.coordinates.forEach(pushRing);
+        } else if (geom.type === 'MultiPolygon') {
+            geom.coordinates.forEach(p => p.forEach(pushRing));
+        }
+        processed++;
+        if (processed % 40 === 0) {
+            setProgress(40 + (processed / totalFeatures) * 22);
+        }
+    });
+
+    const flat = new Float32Array(segs.length * 3);
+    for (let i = 0; i < segs.length; i++) {
+        flat[i*3+0] = segs[i].x;
+        flat[i*3+1] = segs[i].y;
+        flat[i*3+2] = segs[i].z;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+    const m = new THREE.LineBasicMaterial({
+        color: 0x2b2b2b, transparent: true, opacity: 0.88
+    });
+    borderLines = new THREE.LineSegments(g, m);
+    borderLines.userData.kind = 'borders';
+    earthGroup.add(borderLines);
+}
+
+function fallbackGeoJSON() {
+    // Enough to not look empty when offline.  Very rough continental outlines.
+    const wrap = (rings) => ({
+        type: 'Feature', geometry: { type: 'Polygon', coordinates: [rings] }
+    });
+    return {
+        type: 'FeatureCollection',
+        features: [
+            wrap([[-170,66],[-140,70],[-55,70],[-55,45],[-80,25],[-100,30],[-120,30],[-130,55],[-170,66]]),
+            wrap([[-80,12],[-70,-5],[-60,-15],[-40,-20],[-35,-30],[-70,-55],[-80,-10],[-80,12]]),
+            wrap([[-10,35],[20,37],[35,32],[50,12],[50,-10],[20,-35],[-15,-5],[-10,35]]),
+            wrap([[-10,35],[10,55],[30,60],[60,55],[70,40],[30,38],[-10,35]]),
+            wrap([[60,55],[90,55],[130,50],[150,45],[140,30],[100,30],[70,35],[60,55]]),
+            wrap([[115,-10],[150,-12],[155,-35],[120,-35],[115,-10]]),
+        ]
+    };
+}
+
+// -----------------------------------------------------------------------------
+// Terminator great circle — 90° away from the sun direction.
+//   Re-generated every frame since sun moves.
+// -----------------------------------------------------------------------------
+function makeTerminator() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 180), 3));
+    const m = new THREE.LineDashedMaterial({
+        color: 0x555555, dashSize: 0.04, gapSize: 0.04,
+        transparent: true, opacity: 0.75
+    });
+    terminatorLine = new THREE.Line(g, m);
+    terminatorLine.renderOrder = 3;
+    terminatorLine.userData.kind = 'term';
+    earthGroup.add(terminatorLine);
+}
+
+function updateTerminator(sunDir) {
+    // build an orthonormal basis around sunDir to sweep the terminator circle
+    const up = Math.abs(sunDir.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+    const e1 = new THREE.Vector3().crossVectors(sunDir, up).normalize();
+    const e2 = new THREE.Vector3().crossVectors(sunDir, e1).normalize();
+
+    const N = 180;
+    const r = CFG.RADIUS + CFG.BORDER_LIFT + 0.0008;
+    const pos = terminatorLine.geometry.attributes.position.array;
+    for (let i = 0; i < N; i++) {
+        const a = (i / (N - 1)) * Math.PI * 2;
+        const p = e1.clone().multiplyScalar(Math.cos(a) * r)
+                 .add(e2.clone().multiplyScalar(Math.sin(a) * r));
+        pos[i*3+0] = p.x; pos[i*3+1] = p.y; pos[i*3+2] = p.z;
+    }
+    terminatorLine.geometry.attributes.position.needsUpdate = true;
+    terminatorLine.computeLineDistances();
+}
+
+function makeSunRay() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const m = new THREE.LineBasicMaterial({
+        color: 0xcc9922, transparent: true, opacity: 0.35
+    });
+    sunRay = new THREE.Line(g, m);
+    earthGroup.add(sunRay);
+}
+function updateSunRay(sunDir) {
+    const a = sunDir.clone().multiplyScalar(CFG.RADIUS * 1.01);
+    const b = sunDir.clone().multiplyScalar(CFG.RADIUS * 1.9);
+    const p = sunRay.geometry.attributes.position.array;
+    p[0]=a.x; p[1]=a.y; p[2]=a.z;
+    p[3]=b.x; p[4]=b.y; p[5]=b.z;
+    sunRay.geometry.attributes.position.needsUpdate = true;
+}
+
+// -----------------------------------------------------------------------------
+// Great-circle flight arcs
+// -----------------------------------------------------------------------------
+const CITY_PAIRS = [
+    ['NYC', 40.71, -74.00, 'LON', 51.51,  -0.13],
+    ['TYO', 35.68, 139.69, 'LAX', 34.05,-118.24],
+    ['PEK', 39.90, 116.41, 'CDG', 48.86,   2.35],
+    ['SYD',-33.87, 151.21, 'DXB', 25.20,  55.27],
+    ['GRU',-23.55, -46.63, 'MAD', 40.42,  -3.70],
+    ['BOM', 19.08,  72.88, 'JNB',-26.20,  28.05],
+    ['SIN',  1.35, 103.82, 'IST', 41.01,  28.98],
+    ['CAI', 30.04,  31.24, 'SVO', 55.75,  37.62],
+    ['MEX', 19.43, -99.13, 'MAD', 40.42,  -3.70],
+    ['YYZ', 43.65, -79.38, 'HKG', 22.32, 114.17],
+    ['CPT',-33.93,  18.42, 'GRU',-23.55, -46.63],
+    ['ANC', 61.22,-149.90, 'NRT', 35.76, 140.39],
+];
+
+function makeArcs() {
+    arcGroup = new THREE.Group();
+    arcs = [];
+    CITY_PAIRS.forEach(([_a, la1, lo1, _b, la2, lo2], idx) => {
+        const a = latLonToVec3(la1, lo1, CFG.RADIUS + CFG.ARC_LIFT).normalize();
+        const b = latLonToVec3(la2, lo2, CFG.RADIUS + CFG.ARC_LIFT).normalize();
+        const pts = greatCircleArc(a, b, 128);
+
+        const g = new THREE.BufferGeometry().setFromPoints(pts);
+        const m = new THREE.LineBasicMaterial({
+            color: 0x2b6cb0, transparent: true, opacity: 0.35
+        });
+        const line = new THREE.Line(g, m);
+        arcGroup.add(line);
+
+        // Endpoints — small circles on the sphere surface
+        [a, b].forEach(p => {
+            const pp = p.clone().multiplyScalar(CFG.RADIUS + CFG.ARC_LIFT * 0.4);
+            const dg = new THREE.CircleGeometry(0.006, 16);
+            const dm = new THREE.MeshBasicMaterial({ color: 0x2b6cb0 });
+            const dot = new THREE.Mesh(dg, dm);
+            dot.position.copy(pp);
+            dot.lookAt(0, 0, 0);
+            dot.rotateY(Math.PI);
+            arcGroup.add(dot);
+        });
+
+        // 3 particles per arc, phased
+        const particles = [];
+        for (let k = 0; k < 3; k++) {
+            const pg = new THREE.SphereGeometry(0.010, 10, 10);
+            const pm = new THREE.MeshBasicMaterial({ color: 0xc0392b });
+            const pt = new THREE.Mesh(pg, pm);
+            pt.userData.phase  = (idx * 0.17 + k / 3) % 1;
+            pt.userData.speed  = 0.04 + (idx % 5) * 0.008;
+            arcGroup.add(pt);
+            particles.push(pt);
+        }
+
+        arcs.push({ pts, line, particles });
+    });
+    earthGroup.add(arcGroup);
+}
+
+function updateArcs(dt) {
+    arcs.forEach(arc => {
+        arc.particles.forEach(pt => {
+            pt.userData.phase = (pt.userData.phase + dt * pt.userData.speed) % 1;
+            const i = Math.floor(pt.userData.phase * (arc.pts.length - 1));
+            pt.position.copy(arc.pts[i]);
+        });
+    });
+}
+
+// -----------------------------------------------------------------------------
+// Live seismic events — USGS last-24h feed
+// -----------------------------------------------------------------------------
+async function loadQuakes() {
+    try {
+        const r = await fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson');
+        const data = await r.json();
+        buildQuakes(data);
+    } catch (e) {
+        console.warn('USGS offline', e);
+        // keep whatever we already had
+        document.getElementById('dp-quakes').textContent = 'offline';
+    }
+}
+
+function buildQuakes(data) {
+    if (!quakeGroup) {
+        quakeGroup = new THREE.Group();
+        earthGroup.add(quakeGroup);
+    }
+    // clear any prior
+    while (quakeGroup.children.length) {
+        const c = quakeGroup.children.pop();
+        if (c.geometry) c.geometry.dispose();
+        if (c.material) c.material.dispose();
+    }
+    quakes = [];
+
+    const feats = data.features || [];
+    let maxMag = 0;
+    feats.forEach(f => {
+        const [lon, lat, depth] = f.geometry.coordinates;
+        const mag = f.properties.mag || 0;
+        if (mag > maxMag) maxMag = mag;
+
+        const pos = latLonToVec3(lat, lon, CFG.RADIUS + CFG.QUAKE_LIFT);
+
+        // small dot
+        const dotG = new THREE.CircleGeometry(0.003 + mag * 0.0014, 14);
+        const dotM = new THREE.MeshBasicMaterial({ color: 0xc0392b, transparent: true, opacity: 0.85 });
+        const dot = new THREE.Mesh(dotG, dotM);
+        dot.position.copy(pos);
+        dot.lookAt(0, 0, 0);
+        dot.rotateY(Math.PI);
+        quakeGroup.add(dot);
+
+        // ring geometry (thin) — we'll scale it over time for pulse
+        const ringG = new THREE.RingGeometry(0.003, 0.004, 48);
+        const ringM = new THREE.MeshBasicMaterial({
+            color: 0xc0392b, side: THREE.DoubleSide, transparent: true, opacity: 0.8
+        });
+        const ring = new THREE.Mesh(ringG, ringM);
+        ring.position.copy(pos);
+        ring.lookAt(0, 0, 0);
+        ring.rotateY(Math.PI);
+        ring.userData.mag = Math.max(mag, 0.5);
+        ring.userData.phase = Math.random();
+        quakeGroup.add(ring);
+
+        quakes.push({ dot, ring, mag, lat, lon });
+    });
+
+    document.getElementById('dp-quakes').textContent = feats.length;
+    document.getElementById('dp-quakes-max').textContent = maxMag ? maxMag.toFixed(1) : '—';
+}
+
+function updateQuakes(t) {
+    for (const q of quakes) {
+        // phase [0..1] loops every ~2.4s, scaled a bit by magnitude
+        const period = 2.8 - Math.min(q.mag, 6) * 0.18;
+        q.ring.userData.phase += (1 / 60) / period;  // approx; dt-based below
+    }
+    for (const child of (quakeGroup ? quakeGroup.children : [])) {
+        if (!child.userData.mag) continue;
+        const ph = (child.userData.phase) % 1;
+        const s = 1 + ph * (2 + child.userData.mag * 1.2);
+        child.scale.set(s, s, s);
+        child.material.opacity = 0.8 * (1 - ph);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Click-to-ping: spawn a concentric sonar at the hit point
+// -----------------------------------------------------------------------------
+function onCanvasClick(ev) {
+    if (ev.target !== renderer.domElement) return;
+    raycaster.setFromCamera(mouse, camera);
+    const hit = raycaster.intersectObject(raycastSphere);
+    if (!hit.length) return;
+    const p = hit[0].point.clone().normalize().multiplyScalar(CFG.RADIUS + 0.0035);
+
+    for (let i = 0; i < 2; i++) {
+        const rg = new THREE.RingGeometry(0.004, 0.005, 64);
+        const rm = new THREE.MeshBasicMaterial({
+            color: 0x1a1a1a, side: THREE.DoubleSide, transparent: true, opacity: 0.85
+        });
+        const ring = new THREE.Mesh(rg, rm);
+        ring.position.copy(p);
+        ring.lookAt(0, 0, 0);
+        ring.rotateY(Math.PI);
+        ring.userData.born = performance.now();
+        ring.userData.delay = i * 220;
+        pingGroup.add(ring);
+        pings.push(ring);
+    }
+}
+
+function updatePings() {
+    const now = performance.now();
+    for (let i = pings.length - 1; i >= 0; i--) {
+        const p = pings[i];
+        const t = (now - p.userData.born - p.userData.delay) / 1800;
+        if (t < 0) continue;
+        if (t > 1) {
+            pingGroup.remove(p);
+            p.geometry.dispose(); p.material.dispose();
+            pings.splice(i, 1);
+            continue;
+        }
+        const s = 1 + t * 18;
+        p.scale.set(s, s, s);
+        p.material.opacity = 0.85 * (1 - t) * (1 - t);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Input
+// -----------------------------------------------------------------------------
+function onResize() {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+}
+
+function onMouseMove(ev) {
+    mouse.x =  (ev.clientX / innerWidth)  * 2 - 1;
+    mouse.y = -(ev.clientY / innerHeight) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const hit = raycaster.intersectObject(raycastSphere);
+    if (hit.length) {
+        document.body.classList.add('hover-sphere');
+        hoverOnSphere = true;
+        const [lat, lon] = vec3ToLatLon(hit[0].point);
+        const latStr = Math.abs(lat).toFixed(3) + '° ' + (lat >= 0 ? 'N' : 'S');
+        const lonStr = Math.abs(lon).toFixed(3) + '° ' + (lon >= 0 ? 'E' : 'W');
+        document.getElementById('coord').innerHTML = latStr + ' &nbsp; ' + lonStr;
+        document.getElementById('region').textContent = regionForLatLon(lat, lon);
+    } else {
+        document.body.classList.remove('hover-sphere');
+        hoverOnSphere = false;
+        document.getElementById('coord').textContent = '—';
+        document.getElementById('region').textContent = '—';
+    }
+}
+
+// Extremely coarse "what ocean/continent is this" — just an aesthetic flourish
+function regionForLatLon(lat, lon) {
+    if (lat > 66.5)  return '极圈 · Arctic';
+    if (lat < -66.5) return '极圈 · Antarctic';
+    if (lat > -23.5 && lat < 23.5) {
+        if (lon > -20 && lon < 60)  return '非洲 · Africa';
+        if (lon > 60  && lon < 150) return '亚洲 · SE Asia';
+        if (lon > -90 && lon < -20) return '美洲 · Americas';
+        return '海洋 · Ocean';
+    }
+    if (lat > 0) {
+        if (lon > -170 && lon < -50) return '北美 · N America';
+        if (lon > -20  && lon < 60)  return '欧洲 / 非洲';
+        if (lon > 60   && lon < 150) return '亚洲 · Asia';
+    } else {
+        if (lon > -90  && lon < -30) return '南美 · S America';
+        if (lon > 100  && lon < 155) return '大洋洲 · Oceania';
+        if (lon > 0    && lon < 50)  return '非洲南 · S Africa';
+    }
+    return '海洋 · Ocean';
+}
+
+function onKey(ev) {
+    const k = ev.key.toLowerCase();
+    if (k === '?' || (ev.shiftKey && k === '/')) { toggleCheat(); return; }
+    if (k === 'escape') { document.getElementById('cheat').classList.remove('show'); return; }
+    switch (k) {
+        case 'r': toggleRotation(); break;
+        case '0': resetView(); break;
+        case '+': case '=': zoom(-0.5); break;
+        case '-': case '_': zoom(+0.5); break;
+        case 'p': postcard(); break;
+        case ' ': scrubbedUtcMinutes = null; syncScrubToRealtime(); ev.preventDefault(); break;
+        case 'g': toggleLayer('grid'); break;
+        case 'b': toggleLayer('borders'); break;
+        case 't': toggleLayer('term'); break;
+        case 'n': toggleLayer('hatch'); break;
+        case 's': toggleLayer('stars'); break;
+        case 'q': toggleLayer('quakes'); break;
+        case 'a': toggleLayer('arcs'); break;
+        case 'm': cycleMode(); break;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// UI bindings
+// -----------------------------------------------------------------------------
+function bindUI() {
+    document.getElementById('btn-rotate').addEventListener('click', toggleRotation);
+    document.getElementById('btn-reset' ).addEventListener('click', resetView);
+    document.getElementById('btn-zoom-in' ).addEventListener('click', () => zoom(-0.5));
+    document.getElementById('btn-zoom-out').addEventListener('click', () => zoom(+0.5));
+    document.getElementById('btn-postcard').addEventListener('click', postcard);
+    document.getElementById('btn-help'    ).addEventListener('click', toggleCheat);
+
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            setMode(btn.dataset.mode);
+        });
+    });
+
+    document.querySelectorAll('.layer-btn').forEach(btn => {
+        btn.addEventListener('click', () => toggleLayer(btn.dataset.layer));
+    });
+
+    bindScrubber();
+}
+
+function toggleRotation() {
+    autoRotate = !autoRotate;
+    controls.autoRotate = autoRotate;
+    document.getElementById('btn-rotate').classList.toggle('active', autoRotate);
+}
+
+function zoom(delta) {
+    const d = Math.max(controls.minDistance, Math.min(controls.maxDistance,
+              camera.position.length() + delta));
+    animateZoomTo(d);
+}
+function animateZoomTo(target) {
+    const start = camera.position.length(); const t0 = performance.now();
+    (function step() {
+        const p = Math.min((performance.now() - t0) / 350, 1);
+        const e = 1 - Math.pow(1 - p, 3);
+        camera.position.setLength(start + (target - start) * e);
+        if (p < 1) requestAnimationFrame(step);
+    })();
+}
+
+function resetView() {
+    const start = camera.position.clone();
+    const target = new THREE.Vector3(0, 0.15, 3.3);
+    const t0 = performance.now();
+    (function step() {
+        const p = Math.min((performance.now() - t0) / 650, 1);
+        const e = 1 - Math.pow(1 - p, 3);
+        camera.position.lerpVectors(start, target, e);
+        controls.target.set(0, 0, 0);
+        if (p < 1) requestAnimationFrame(step);
+    })();
+}
+
+function toggleCheat() {
+    document.getElementById('cheat').classList.toggle('show');
+}
+
+function toggleLayer(layer) {
+    layers[layer] = !layers[layer];
+    const btn = document.querySelector('.layer-btn[data-layer="' + layer + '"]');
+    if (btn) btn.classList.toggle('on', layers[layer]);
+    applyLayers();
+}
+function applyLayers() {
+    if (graticule)      graticule.visible     = layers.grid;
+    if (borderLines)    borderLines.visible   = layers.borders;
+    if (terminatorLine) terminatorLine.visible = layers.term;
+    if (hatchMesh)      hatchMesh.visible     = layers.hatch;
+    if (starField)      starField.visible     = layers.stars;
+    if (constellations) constellations.visible = layers.stars;
+    if (quakeGroup)     quakeGroup.visible    = layers.quakes;
+    if (arcGroup)       arcGroup.visible      = layers.arcs;
+    if (sunRay)         sunRay.visible        = layers.term;
+}
+
+// -----------------------------------------------------------------------------
+// Modes — now actually change character, not just a color tween
+// -----------------------------------------------------------------------------
+function cycleMode() {
+    const order = ['minimal', 'standard', 'detailed'];
+    const idx = (order.indexOf(currentMode) + 1) % order.length;
+    const next = order[idx];
+    document.querySelectorAll('.mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === next);
+    });
+    setMode(next);
+}
+
+function setMode(mode) {
+    currentMode = mode;
+
+    if (mode === 'minimal') {
+        // coastlines only, bright equator, no meridians except prime, no hatch
+        graticule.children.forEach(c => {
+            if (c.userData.role === 'parallel') {
+                c.material.opacity = (c.geometry.attributes.position.array[1] === 0) ? 0.7 : 0.25;
+            } else {
+                c.material.opacity = (c.userData.role === 'prime') ? 0.4 : 0.15;
+            }
+        });
+        if (borderLines) borderLines.material.opacity = 0.7;
+        if (hatchMesh)  hatchMesh.visible = false;
+        layers.hatch = false;
+        document.querySelector('.layer-btn[data-layer="hatch"]').classList.remove('on');
+    }
+
+    if (mode === 'standard') {
+        graticule.children.forEach(c => {
+            if (c.userData.role === 'parallel') c.material.opacity = 0.75;
+            else c.material.opacity = 0.55;
+        });
+        if (borderLines) borderLines.material.opacity = 0.88;
+        if (hatchMesh)  hatchMesh.visible = layers.hatch;
+    }
+
+    if (mode === 'detailed') {
+        graticule.children.forEach(c => { c.material.opacity = 0.9; });
+        if (borderLines) borderLines.material.opacity = 1.0;
+        if (hatchMesh)  hatchMesh.visible = layers.hatch;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Time scrubber
+// -----------------------------------------------------------------------------
+function buildTimeTicks() {
+    const slider = document.getElementById('ts-slider');
+    for (let h = 0; h <= 24; h++) {
+        const tick = document.createElement('div');
+        tick.className = 'ts-tick' + (h % 6 === 0 ? ' major' : '');
+        tick.style.left = (h / 24 * 100) + '%';
+        slider.appendChild(tick);
+    }
+    syncScrubToRealtime();
+}
+function syncScrubToRealtime() {
+    const d = new Date();
+    const minutes = d.getUTCHours() * 60 + d.getUTCMinutes();
+    setScrubHandle(minutes);
+    document.getElementById('ts-now').style.left =
+        (minutes / 1440 * 100) + '%';
+}
+function setScrubHandle(minutes) {
+    document.getElementById('ts-handle').style.left =
+        (minutes / 1440 * 100) + '%';
+    const hh = String(Math.floor(minutes / 60)).padStart(2,'0');
+    const mm = String(Math.floor(minutes % 60)).padStart(2,'0');
+    document.getElementById('ts-time').textContent = hh + ':' + mm;
+}
+
+function bindScrubber() {
+    const slider = document.getElementById('ts-slider');
+    const handle = document.getElementById('ts-handle');
+    let dragging = false;
+    function handleAt(ev) {
+        const rect = slider.getBoundingClientRect();
+        const px = (ev.clientX ?? ev.touches[0].clientX) - rect.left;
+        const t  = Math.max(0, Math.min(1, px / rect.width));
+        const m  = Math.round(t * 1440);
+        scrubbedUtcMinutes = m;
+        setScrubHandle(m);
+    }
+    slider.addEventListener('mousedown', e => {
+        dragging = true; handle.classList.add('drag'); handleAt(e);
+    });
+    addEventListener('mousemove', e => { if (dragging) handleAt(e); });
+    addEventListener('mouseup',   ()=> { dragging = false; handle.classList.remove('drag'); });
+}
+
+// -----------------------------------------------------------------------------
+// Postcard — render the current view to a PNG and trigger a download.
+//   Composite the scene canvas + the paper texture for final output.
+// -----------------------------------------------------------------------------
+function postcard() {
+    renderer.render(scene, camera);
+    const dataURL = renderer.domElement.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataURL;
+    const iso = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.download = 'terra_' + iso + '.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+}
+
+// -----------------------------------------------------------------------------
+// Animation loop
+// -----------------------------------------------------------------------------
+let lastT = performance.now();
+
+function animate() {
+    requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+
+    controls.update();
+
+    // sun position
+    const d = currentDate();
+    const sp = subsolarPoint(d);
+    const sunDir = latLonToVec3(sp.lat, sp.lon).normalize();
+
+    if (hatchMesh) hatchMesh.material.uniforms.uSunDir.value.copy(sunDir);
+    if (hatchMesh) hatchMesh.material.uniforms.uTime.value = now / 1000;
+    if (terminatorLine) updateTerminator(sunDir);
+    if (sunRay) updateSunRay(sunDir);
+
+    updateArcs(dt);
+
+    // quake pulse phases (dt-based so behavior is consistent)
+    for (const child of (quakeGroup ? quakeGroup.children : [])) {
+        if (child.userData.mag != null) {
+            const period = 2.8 - Math.min(child.userData.mag, 6) * 0.18;
+            child.userData.phase = (child.userData.phase + dt / period) % 1;
+            const ph = child.userData.phase;
+            const s = 1 + ph * (2.2 + child.userData.mag * 1.4);
+            child.scale.set(s, s, s);
+            child.material.opacity = 0.85 * (1 - ph);
+        }
+    }
+
+    updatePings();
+
+    // live panel
+    const iso = d.toISOString();
+    document.getElementById('dp-utc').textContent =
+        iso.slice(11, 19);
+    document.getElementById('dp-subsolar').textContent =
+        (Math.abs(sp.lat).toFixed(1) + (sp.lat>=0?'°N':'°S') + '  ' +
+         Math.abs(sp.lon).toFixed(1) + (sp.lon>=0?'°E':'°W'));
+    document.getElementById('dp-arcs').textContent = arcs.length;
+    document.getElementById('dp-zoom').textContent =
+        camera.position.length().toFixed(2) + ' R';
+
+    // heading = azimuth of camera on xz plane
+    const az = (Math.atan2(camera.position.x, camera.position.z) * 180 / Math.PI + 360) % 360;
+    document.getElementById('dp-heading').textContent = az.toFixed(0).padStart(3,'0') + '°';
+
+    // keep "now marker" ticking even when idle
+    if (scrubbedUtcMinutes == null) {
+        syncScrubToRealtime();
+    } else {
+        // update "now" marker to real time
+        const real = new Date();
+        const m = real.getUTCHours() * 60 + real.getUTCMinutes();
+        document.getElementById('ts-now').style.left = (m / 1440 * 100) + '%';
+    }
+
+    // rotate stars slowly relative to earth — parallax gives depth cue
+    if (starField) starField.rotation.y += dt * 0.002;
+    if (constellations) constellations.rotation.y += dt * 0.002;
+
+    renderer.render(scene, camera);
+}
+
+// -----------------------------------------------------------------------------
+// go
+// -----------------------------------------------------------------------------
+init();
+</script>
+</body>
+</html>
